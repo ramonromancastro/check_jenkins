@@ -3,6 +3,7 @@
 # Check Jenkins job build time using the JSON API
 #
 # Author: Eric Blanchard
+# Modified: Ramón Román Castro
 #
 #
 # This Nagios plugin check that running Jenkins jobs are not taking unusual time to complete.
@@ -25,7 +26,7 @@ use constant {
     UNKNOWN  => 3,
 };
 use constant API_SUFFIX => "/api/json";
-our $VERSION = '1.5';
+our $VERSION = '1.5.1';
 my %args;
 my $ciMasterUrl;
 my $jobName = '(All)';
@@ -36,6 +37,9 @@ my $acrit   = -1;
 my $status  = UNKNOWN;
 my $debug   = 0;
 my $timeout = 10;
+my $username    = '';
+my $password    = '';
+my $insecure    = 0;
 
 # Functions prototypes
 sub test_job(\%);
@@ -53,6 +57,9 @@ GetOptions(
     'proxy=s',
     'noproxy',
     'noperfdata',
+	'insecure',
+    'username|u=s' => \$username,
+    'password|p=s' => \$password,
     'warning|w=i'    => \$warn,
     'critical|c=i'   => \$crit,
     'absoluteWarn=i' => \$awarn,
@@ -67,6 +74,11 @@ $ciMasterUrl = $ARGV[0];
 $ciMasterUrl =~ s/\/$//;
 my $ua = LWP::UserAgent->new();
 $ua->timeout($timeout);
+
+if ( defined( $args{insecure} ) ) {
+    $ua->ssl_opts('verify_hostname' => 0);
+}
+
 if ( defined( $args{proxy} ) ) {
     $ua->proxy( 'http', $args{proxy} );
 }
@@ -80,8 +92,12 @@ else {
 my $url =
     $ciMasterUrl
   . API_SUFFIX
-  . '?tree=jobs[name,url,buildable,lastBuild[number,building,timestamp,estimatedDuration]]';
+  . '?tree=jobs[name,url,color,buildable,lastBuild[number,building,timestamp,estimatedDuration]]';
 my $req = HTTP::Request->new( GET => $url );
+if ($username && $password){
+    trace("Attempting HTTP basic auth as user: $username\n");
+    $req->authorization_basic($username,$password);
+}
 trace( "Get ", $url, " ...\n" );
 my $res = $ua->request($req);
 if ( !$res->is_success ) {
@@ -143,6 +159,28 @@ sub test_job(\%) {
 
         # This build is not currently running
         trace( ", build number=", $build_number, " is not running \n" );
+		
+        if ( $job->{'color'} =~ /^red/ ){
+            print(
+                'CRITICAL: job: <a href="',      $job_url,
+                '">',                            $job_name,
+                '</a>, build=',                  $build_number,
+                ', failed',
+                "\n"
+            );
+			return CRITICAL;
+		}
+		if ( $job->{'color'} =~ /^yellow/ ){
+            print(
+                'WARNING: job: <a href="',       $job_url,
+                '">',                            $job_name,
+                '</a>, build=',                  $build_number,
+                ', was unstable',
+                "\n"
+            );
+			return WARNING;
+		}
+		
         return OK;
     }
     my $stamp          = $job->{'lastBuild'}->{'timestamp'};
@@ -268,8 +306,13 @@ check_jenkins_job_time.pl [options] <jenkins-url>
          --absoluteWarn=<minutes> the duration in minutes for the WARNING threshold
          --absoluteCrit=<minutes> the duration in minutes for the CRITICAL threshold
       -j --job=<job-name>      the name of the job to monitor (default all jobs)
+      --username=<usename>     the username for authentication
+      --password=<password>    the password for authentication
+      --insecure               allow HTTPS insecure connection (self
+                               signed, expired, ...)
 
-       
+
+
 =head1 OPTIONS
 
 =over 8
@@ -325,6 +368,18 @@ check_jenkins_job_time.pl [options] <jenkins-url>
 =item B<-j> B<--job=>job-name
 
     The name of the job to monitor (default all jobs)
+	
+=item B<-c> B<--username=>username
+
+    The username for authentication
+
+=item B<-c> B<--password=>password
+
+    The password for authentication
+	
+=item B<--insecure>
+
+    Allow HTTPS insecure connection (self signed, expired, ...)
 
 =back
 
