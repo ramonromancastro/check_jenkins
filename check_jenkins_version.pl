@@ -3,8 +3,9 @@
 # Check Jenkins version
 #
 # Author: Eric Blanchard
+# Modified: Ramón Román Castro
 #
-# Usage: check_jenkins_version -I <address> [-p <port>] [-u <url>] [-t <timeout>] [-w <min-version>] [-c <min-version>]
+# Usage: check_jenkins_version -I <address> [-p <port>] [-u <url>] [-t <timeout>] [-w <min-version>] [-c <min-version>] [--username <username>] [--password <password>] [--insecure]
 #
 # This Nagios plugin check the version number of a Jenkins instance (throuh HTTP request)
 #
@@ -24,13 +25,16 @@ use constant {
 };
 use constant PLUGINS_URL => "/pluginManager";
 use constant API_SUFFIX  => "/api/json";
-our $VERSION = '1.3';
+our $VERSION = '1.3.1';
 my $debug       = 0;
 my $warn_vers   = -1;
 my $crit_vers   = -1;
 my $status_line = '';
 my $exit_code   = UNKNOWN;
 my $timeout     = 10;
+my $username    = '';
+my $password    = '';
+my $insecure    = 0;
 my %args;
 
 # Functions prototypes
@@ -45,6 +49,9 @@ GetOptions(
     'timeout|t=i' => \$timeout,
     'proxy=s',
     'noproxy',
+	'insecure',
+    'username|u=s' => \$username,
+    'password|p=s' => \$password,
     'warning|w=s'  => \$warn_vers,
     'critical|c=s' => \$crit_vers
   )
@@ -57,17 +64,25 @@ $ciMasterUrl =~ s/\/$//;
 my $ua = LWP::UserAgent->new();
 $ua->timeout($timeout);
 
+if ( defined( $args{insecure} ) ) {
+    $ua->ssl_opts('verify_hostname' => 0);
+}
+
 if ( defined( $args{proxy} ) ) {
     $ua->proxy( 'http', $args{proxy} );
 }
 else {
     if ( !defined( $args{noproxy} ) ) {
-
         # Use HTTP_PROXY environment variable
         $ua->env_proxy;
     }
 }
+
 my $req = HTTP::Request->new( HEAD => $ciMasterUrl . '/' );
+if ($username && $password){
+    trace("Attempting HTTP basic auth as user: $username\n");
+    $req->authorization_basic($username,$password);
+}
 trace("HEAD $ciMasterUrl/ ...\n");
 my $res = $ua->request($req);
 if ( !$res->is_success ) {
@@ -105,6 +120,9 @@ if ( $jenkins_version >= '1.466' ) {
       . API_SUFFIX
       . '?tree=plugins[active,enabled,hasUpdate,longName,version]';
     $req = HTTP::Request->new( GET => $url );
+    if ($username && $password){
+        $req->authorization_basic($username,$password);
+    }
     trace("GET $url \n");
     my $res = $ua->request($req);
     if ( !$res->is_success ) {
@@ -164,12 +182,16 @@ check_jenkins_version.pl [options] <jenkins-url>
       -d --debug               turns on debug traces
       -t --timeout=<timeout>   the timeout in seconds to wait for the
                                request (default 10)
-         --proxy=<url>         the http proxy url (default from
+      --proxy=<url>            the http proxy url (default from
                                HTTP_PROXY env)
-         --noproxy             do not use HTTP_PROXY env
+      --noproxy                do not use HTTP_PROXY env
       -w --warning=<version>   the minimum version for WARNING threshold
       -c --critical=<version>  the minimum version for CRITICAL threshold
-       
+      --username=<usename>     the username for authentication
+      --password=<password>    the password for authentication
+      --insecure               allow HTTPS insecure connection (self
+                               signed, expired, ...)
+
 =head1 OPTIONS
 
 =over 8
@@ -209,6 +231,18 @@ check_jenkins_version.pl [options] <jenkins-url>
 =item B<-c> B<--critical=>version
 
     The minimum version for CRITICAL threshold
+	
+=item B<-c> B<--username=>username
+
+    The username for authentication
+
+=item B<-c> B<--password=>password
+
+    The password for authentication
+	
+=item B<--insecure>
+
+    Allow HTTPS insecure connection (self signed, expired, ...)
     
 =back
 
