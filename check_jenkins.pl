@@ -8,6 +8,7 @@
 # jobs=<count>;<warn>;<crit> passed=<count> failed=<count>;<warn>;<crit> disabled=<count> running=<count>
 #
 # Author: Eric Blanchard
+# Modified: Ramón Román Castro
 #
 use strict;
 use LWP::UserAgent;
@@ -24,17 +25,16 @@ use constant {
     UNKNOWN  => 3,
 };
 use constant API_SUFFIX => "/api/json";
-our $VERSION = '1.7';
+our $VERSION = '1.7.1';
 my %args;
 my $ciMasterUrl;
-my $jobs_warn   = -1;
-my $jobs_crit   = -1;
-my $fail_warn   = 100;
-my $fail_crit   = 100;
 my $debug       = 0;
 my $status_line = '';
 my $exit_code   = UNKNOWN;
 my $timeout     = 10;
+my $username    = '';
+my $password    = '';
+my $insecure    = 0;
 
 # Functions prototypes
 sub trace(@);
@@ -50,14 +50,13 @@ GetOptions(
     'proxy=s',
     'noproxy',
     'noperfdata',
-    'warning|w=i'  => \$jobs_warn,
-    'critical|c=i' => \$jobs_crit,
-    'failedwarn=i' => \$fail_warn,
-    'failedcrit=i' => \$fail_crit
+	'insecure',
+    'username|u=s' => \$username,
+    'password|p=s' => \$password
   )
   or pod2usage( { '-exitval' => UNKNOWN } );
 HelpMessage(
-    { '-msg' => 'Missing Jenkins url parameter', '-exitval' => UNKNOWN } )
+    { '-msg' => 'UNKNOWN: Missing Jenkins url parameter', '-exitval' => UNKNOWN } )
   if scalar(@ARGV) != 1;
 $ciMasterUrl = $ARGV[0];
 $ciMasterUrl =~ s/\/$//;
@@ -65,6 +64,10 @@ $ciMasterUrl =~ s/\/$//;
 # Master API request
 my $ua = LWP::UserAgent->new();
 $ua->timeout($timeout);
+
+if ( defined( $args{insecure} ) ) {
+    $ua->ssl_opts('verify_hostname' => 0);
+}
 if ( defined( $args{proxy} ) ) {
     $ua->proxy( 'http', $args{proxy} );
 }
@@ -77,10 +80,14 @@ else {
 }
 my $url = $ciMasterUrl . API_SUFFIX . '?tree=jobs[color,name]';
 my $req = HTTP::Request->new( GET => $url );
+if ($username && $password){
+    trace("Attempting HTTP basic auth as user: $username\n");
+    $req->authorization_basic($username,$password);
+}
 trace("GET $url ...\n");
 my $res = $ua->request($req);
 if ( !$res->is_success ) {
-    print "Failed retrieving $url ($res->{status_line})";
+    print "UNKNOWN: Failed retrieving $url ($res->{status_line})";
     exit UNKNOWN;
 }
 my $json       = new JSON;
@@ -89,6 +96,7 @@ my $jobs       = $obj->{'jobs'};                   # ref to array
 my $jobs_count = scalar(@$jobs);
 trace( "Found " . $jobs_count . " jobs\n" );
 my $disabled_jobs = 0;
+my $unstable_jobs = 0;
 my $failed_jobs   = 0;
 my $passed_jobs   = 0;
 my $running_jobs  = 0;
@@ -98,64 +106,38 @@ foreach my $job (@$jobs) {
     $disabled_jobs++ if $job->{'color'} eq 'disabled';
     $passed_jobs++   if $job->{'color'} eq 'blue';
     $failed_jobs++   if $job->{'color'} eq 'red';
-}
-my $arctive_jobs = $jobs_count - $disabled_jobs;
-my $perfdata     = '';
-if ( !defined( $args{noperfdata} ) ) {
-    $perfdata = 'jobs='
-      . $jobs_count . ';'
-      . ( $jobs_warn == -1 ? '' : $jobs_warn ) . ';'
-      . ( $jobs_crit == -1 ? '' : $jobs_crit );
-    $perfdata .= ' passed=' . $passed_jobs;
-    $perfdata .=
-      ' failed=' . $failed_jobs . ';' . $fail_warn . ';' . $fail_crit;
-    $perfdata .= ' disabled=' . $disabled_jobs;
-    $perfdata .= ' running=' . ( $arctive_jobs - $passed_jobs - $failed_jobs );
-}
-if ( $jobs_crit != -1 && $jobs_count > $jobs_crit ) {
-    print "CRITICAL: jobs count: ", $jobs_count, " exeeds critical threshold: ",
-      $jobs_crit, "\n";
-    if ( !defined( $args{noperfdata} ) ) {
-        print( '|', $perfdata, "\n" );
-    }
-    exit CRITICAL;
-}
-if ( $jobs_warn != -1 && $jobs_count > $jobs_warn ) {
-    print "WARNING: jobs count: ", $jobs_count, " exeeds warning threshold: ",
-      $jobs_warn, "\n";
-    if ( !defined( $args{noperfdata} ) ) {
-        print( '|', $perfdata, "\n" );
-    }
-    exit WARNING;
-}
-my $failed_ratio = 0;
-if ( $arctive_jobs != 0 ) {
-	my $failed_ratio = $failed_jobs * 100 / $arctive_jobs;
+	$unstable_jobs++ if $job->{'color'} eq 'yellow';
 }
 
-if ( $failed_ratio > $fail_crit ) {
-    print(
-        "CRITICAL: jobs count: ",
-        $jobs_count, " Failed jobs ratio: ",
-        $failed_ratio, '%'
-    );
+my $active_jobs = $jobs_count - $disabled_jobs;
+my $perfdata     = '';
+
+if ( !defined( $args{noperfdata} ) ) {
+    $perfdata = 'jobs=' . $jobs_count;
+    $perfdata .= ' passed=' . $passed_jobs;
+	$perfdata .= ' unstable=' . $unstable_jobs;
+    $perfdata .= ' failed=' . $failed_jobs;
+    $perfdata .= ' disabled=' . $disabled_jobs;
+    $perfdata .= ' running=' . ( $active_jobs - $passed_jobs - $failed_jobs - $unstable_jobs );
+}
+
+if ( $failed_jobs > 0 ) {
+    print "CRITICAL: ", $unstable_jobs, " jobs have a error status\n";
     if ( !defined( $args{noperfdata} ) ) {
         print( '|', $perfdata, "\n" );
     }
     exit CRITICAL;
 }
-if ( $failed_ratio > $fail_warn ) {
-    print(
-        "WARNING: jobs count: ",
-        $jobs_count, " Failed jobs ratio: ",
-        $failed_ratio, '%'
-    );
+
+if ( $unstable_jobs > 0 ) {
+    print "WARNING: ", $unstable_jobs, " jobs have a unstable status\n";
     if ( !defined( $args{noperfdata} ) ) {
         print( '|', $perfdata, "\n" );
     }
     exit WARNING;
 }
-print( 'OK: jobs count: ', $jobs_count );
+
+print( 'OK: All jobs are ok' );
 if ( !defined( $args{noperfdata} ) ) {
     print( '|', $perfdata, "\n" );
 }
@@ -187,17 +169,21 @@ check_jenkins.pl [options] <jenkins-url>
       -d --debug               turns on debug traces
       -t --timeout=<timeout>   the timeout in seconds to wait for the
                                request (default 30)
-         --proxy=<url>         the http proxy url (default from
+      --proxy=<url>            the http proxy url (default from
                                HTTP_PROXY env)
-         --noproxy             do not use HTTP_PROXY env
-         --noperfdata          do not output perdata
+      --noproxy                do not use HTTP_PROXY env
+      --noperfdata             do not output perdata
       -w --warning=<count>     the maximum total jobs count for WARNING threshold
       -c --critical=<count>    the maximum total jobs count for CRITICAL threshold
-         --failedwarn=<%>      the maximum ratio of failed jobs per enabled
+      --failedwarn=<%>         the maximum ratio of failed jobs per enabled
                                jobs for WARNING threshold
-         --failedcrit=<%>      the maximum ratio of failed jobs per enabled
+      --failedcrit=<%>         the maximum ratio of failed jobs per enabled
                                jobs for CRITICAL threshold
-       
+      --username=<usename>     the username for authentication
+      --password=<password>    the password for authentication
+      --insecure               allow HTTPS insecure connection (self
+                               signed, expired, ...)
+
 =head1 OPTIONS
 
 =over 8
@@ -234,21 +220,17 @@ check_jenkins.pl [options] <jenkins-url>
 
     Do not output perdata
 
-=item B<-w> B<--warning=>count
+=item B<-c> B<--username=>username
 
-    The maximum total jobs count for WARNING threshold
+    The username for authentication
 
-=item B<-c> B<--critical=>count
+=item B<-c> B<--password=>password
 
-    The maximum total jobs count for CRITICAL threshold
-    
-=item B<--failedwarn=>%
+    The password for authentication
+	
+=item B<--insecure>
 
-    The maximum ratio of failed jobs per enabled jobs for WARNING threshold
-    
-=item B<--failedcrit=>%
-
-    The maximum ratio of failed jobs per enabled jobs for CRITICAL threshold
+    Allow HTTPS insecure connection (self signed, expired, ...)
     
 =back
 
