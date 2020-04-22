@@ -159,28 +159,6 @@ sub test_job(\%) {
 
         # This build is not currently running
         trace( ", build number=", $build_number, " is not running \n" );
-		
-        if ( $job->{'color'} =~ /^red/ ){
-            print(
-                'CRITICAL: job: <a href="',      $job_url,
-                '">',                            $job_name,
-                '</a>, build=',                  $build_number,
-                ', failed',
-                "\n"
-            );
-			return CRITICAL;
-		}
-		if ( $job->{'color'} =~ /^yellow/ ){
-            print(
-                'WARNING: job: <a href="',       $job_url,
-                '">',                            $job_name,
-                '</a>, build=',                  $build_number,
-                ', was unstable',
-                "\n"
-            );
-			return WARNING;
-		}
-		
         return OK;
     }
     my $stamp          = $job->{'lastBuild'}->{'timestamp'};
