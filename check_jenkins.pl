@@ -25,7 +25,7 @@ use constant {
     UNKNOWN  => 3,
 };
 use constant API_SUFFIX => "/api/json";
-our $VERSION = '1.7.1';
+our $VERSION = '1.7.2';
 my %args;
 my $ciMasterUrl;
 my $debug       = 0;
@@ -122,7 +122,7 @@ if ( !defined( $args{noperfdata} ) ) {
 }
 
 if ( $failed_jobs > 0 ) {
-    print "CRITICAL: ", $unstable_jobs, " jobs have a error status\n";
+    print "CRITICAL: ", $failed_jobs, " jobs have a error status\n";
     if ( !defined( $args{noperfdata} ) ) {
         print( '|', $perfdata, "\n" );
     }
