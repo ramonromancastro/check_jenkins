@@ -54,6 +54,9 @@ my $status_line_ex        = '';
 my $perfdata              = '';
 my $persitency_file;
 my %slaves_status;
+my $username    = '';
+my $password    = '';
+my $insecure    = 0;
 
 #my $dumper = Dumpvalue->new();
 
@@ -79,7 +82,10 @@ GetOptions(
     'critical|c=i'   => \$crit,
     'executorWarn=i' => \$ewarn,
     'executorCrit=i' => \$ecrit,
-    'slave-name|n=s' => \$slaveName
+    'slave-name|n=s' => \$slaveName,
+	'insecure',
+    'username|u=s' => \$username,
+    'password|p=s' => \$password
   )
   or pod2usage({'-exitval' => UNKNOWN});
 HelpMessage({'-msg' => 'Missing Jenkins url parameter', '-exitval' => UNKNOWN})
@@ -94,6 +100,9 @@ $persitency_file =
 my $ua = LWP::UserAgent->new();
 $ua->timeout($timeout);
 
+if ( defined( $args{insecure} ) ) {
+    $ua->ssl_opts('verify_hostname' => 0);
+}
 if (defined($args{proxy})) {
     $ua->proxy('http', $args{proxy});
 } else {
@@ -109,6 +118,10 @@ my $url =
   . API_SUFFIX
   . '?tree=computer[displayName,executors[idle],idle,offline,offlineCause[description],temporarilyOffline]';
 my $req = HTTP::Request->new(GET => $url);
+if ($username && $password){
+    trace("Attempting HTTP basic auth as user: $username\n");
+    $req->authorization_basic($username,$password);
+}
 trace("Get ", $url, " ...\n");
 my $res = $ua->request($req);
 if (!$res->is_success) {
@@ -422,6 +435,10 @@ check_jenkins_slaves.pl [options] <jenkins-url>
          --executorWarn=<percent>  the percentage of used executors for the WARNING threshold
          --executorCrit=<percent>  the percentage of used executors for the CRITICAL threshold
       -n --slave-name=<slave-name> the name of the slave to monitor (default all slaves)
+      --username=<usename>     the username for authentication
+      --password=<password>    the password for authentication
+      --insecure               allow HTTPS insecure connection (self
+                               signed, expired, ...)
 
        
 =head1 OPTIONS
