@@ -7,6 +7,7 @@ A set of 4 Nagios plugins to monitor Jenkins health.
 *  check_jenkins_version.pl
 *  check_jenkins_job_time.pl
 *  check_jenkins_slaves.pl
+*  check_jenkins_last_build.pl 
 
 These 4 perl scripts use HTTP requests to query Jenkins API (json).
 
@@ -84,3 +85,7 @@ through NRPE by Nagios server.
 
     check_jenkins_slaves.pl --man
         will print the manual page for this command
+
+## check_jenkins_last_build.pl ##
+
+This Nagios plugin checks last build of jobs of a Jenkins instance.
